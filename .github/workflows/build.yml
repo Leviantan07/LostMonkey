@@ -1,0 +1,70 @@
+name: Build (Unity WebGL)
+
+# Builds a WebGL player with game-ci/unity-builder.
+#
+# Requires three repository secrets before it can actually build:
+#   UNITY_LICENSE   — contents of your Unity .ulf license file
+#   UNITY_EMAIL     — Unity account email
+#   UNITY_PASSWORD  — Unity account password
+# See README.md for how to obtain these. Until they are set, the build job
+# self-skips with a green result instead of failing every push.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build WebGL
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Unity license is configured
+        id: gate
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::UNITY_LICENSE secret not set — skipping build. See README.md."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout (with LFS)
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Cache Library
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-
+
+      - name: Build
+        if: steps.gate.outputs.enabled == 'true'
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: WebGL
+
+      - name: Upload build artifact
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LostMonkey-WebGL
+          path: build/WebGL
