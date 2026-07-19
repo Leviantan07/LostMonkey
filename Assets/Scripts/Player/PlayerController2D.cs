@@ -1,18 +1,22 @@
+using LostMonkey.Audio;
 using UnityEngine;
 
 namespace LostMonkey.Player
 {
     /// <summary>
-    /// Starter 2D platformer controller for Lost Monkey.
+    /// 2D platformer controller for Lost Monkey.
     ///
-    /// Implements run + jump with two "game feel" staples:
-    ///   * Coyote time      — you can still jump for a few frames after leaving a ledge.
-    ///   * Jump buffering    — a jump pressed slightly before landing still fires.
+    /// Implements run + jump with three "game feel" staples:
+    ///   * Coyote time          — you can still jump for a few frames after leaving a ledge.
+    ///   * Jump buffering        — a jump pressed slightly before landing still fires.
+    ///   * Variable jump height  — releasing jump early cuts the rise for a shorter hop.
     ///
-    /// This is a starting template (Design Pillar #1: movement feels great first).
-    /// It uses Unity's legacy Input API so it works in a fresh project with no
-    /// extra package setup. Attach to the player GameObject, which needs a
-    /// Rigidbody2D and a Collider2D, and assign a ground-check transform + layer.
+    /// Uses Unity's legacy Input API so it works in a fresh project with no extra
+    /// package setup. Attach to the player GameObject, which needs a Rigidbody2D
+    /// and a Collider2D, and assign a ground-check transform + layer.
+    ///
+    /// While swinging on a vine, <see cref="VineSwing"/> sets <see cref="ControlEnabled"/>
+    /// to false so this script stops driving the Rigidbody2D.
     /// </summary>
     [RequireComponent(typeof(Rigidbody2D))]
     public class PlayerController2D : MonoBehaviour
@@ -20,6 +24,8 @@ namespace LostMonkey.Player
         [Header("Movement")]
         [SerializeField] private float moveSpeed = 8f;
         [SerializeField] private float jumpForce = 15f;
+        [Tooltip("Velocity kept when the jump button is released mid-rise (0..1).")]
+        [SerializeField] private float jumpCutMultiplier = 0.5f;
 
         [Header("Ground check")]
         [SerializeField] private Transform groundCheck;
@@ -38,6 +44,11 @@ namespace LostMonkey.Player
         private float _jumpBufferCounter;
         private bool _isFacingRight = true;
 
+        /// <summary>When false, this script stops driving the body (e.g. during a vine swing).</summary>
+        public bool ControlEnabled { get; set; } = true;
+
+        public bool IsGrounded => CheckGrounded();
+
         private void Awake()
         {
             _body = GetComponent<Rigidbody2D>();
@@ -45,6 +56,13 @@ namespace LostMonkey.Player
 
         private void Update()
         {
+            UpdateCoyoteTimer();
+
+            if (!ControlEnabled)
+            {
+                return;
+            }
+
             _horizontalInput = Input.GetAxisRaw("Horizontal");
 
             // Buffer the jump press so it survives a few frames until grounded.
@@ -57,19 +75,28 @@ namespace LostMonkey.Player
                 _jumpBufferCounter -= Time.deltaTime;
             }
 
-            UpdateCoyoteTimer();
+            // Variable jump height: cut the rise if jump is released early.
+            if (Input.GetButtonUp("Jump") && _body.velocity.y > 0f)
+            {
+                _body.velocity = new Vector2(_body.velocity.x, _body.velocity.y * jumpCutMultiplier);
+            }
+
             TryJump();
             FlipToFaceMovement();
         }
 
         private void FixedUpdate()
         {
+            if (!ControlEnabled)
+            {
+                return;
+            }
             _body.velocity = new Vector2(_horizontalInput * moveSpeed, _body.velocity.y);
         }
 
         private void UpdateCoyoteTimer()
         {
-            _coyoteCounter = IsGrounded() ? coyoteTime : _coyoteCounter - Time.deltaTime;
+            _coyoteCounter = CheckGrounded() ? coyoteTime : _coyoteCounter - Time.deltaTime;
         }
 
         private void TryJump()
@@ -79,10 +106,15 @@ namespace LostMonkey.Player
                 _body.velocity = new Vector2(_body.velocity.x, jumpForce);
                 _jumpBufferCounter = 0f;
                 _coyoteCounter = 0f;
+
+                if (AudioManager.Instance != null)
+                {
+                    AudioManager.Instance.PlayJump();
+                }
             }
         }
 
-        private bool IsGrounded()
+        private bool CheckGrounded()
         {
             if (groundCheck == null)
             {
